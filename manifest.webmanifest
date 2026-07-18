@@ -3,6 +3,7 @@
   "short_name": "CompatQuiz",
   "description": "Crée ton propre quiz de compatibilité et partage-le.",
   "start_url": "/index.html",
+  "author": "SOH TANKOU JOËL VALDO"
   "scope": "/",
   "display": "standalone",
   "background_color": "#100c1c",
