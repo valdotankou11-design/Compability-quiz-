@@ -1,0 +1,495 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+<title>Mon dashboard — Compatibility Quiz</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@500;700;900&family=Poppins:wght@300;400;500;600;700&family=Space+Mono:wght@400;700&family=Caveat:wght@500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="config.js"></script>
+<script src="quiz-templates.js"></script>
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#100c1c">
+<link rel="icon" href="/icon-192.png" type="image/png">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="CompatQuiz">
+<style>
+  .top-row{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:18px;flex-wrap:wrap;}
+  .q-opt-row{display:flex;align-items:center;gap:8px;margin-bottom:6px;}
+  .q-opt-row input[type=radio]{accent-color:var(--pink);}
+  .share-box{display:flex;gap:8px;align-items:center;background:var(--panel2);border:1px solid var(--border);border-radius:12px;padding:10px 12px;margin-bottom:16px;}
+  .share-box input{flex:1;background:transparent;border:none;color:var(--text-dim);font-family:'Space Mono',monospace;font-size:12px;margin:0;padding:4px;}
+  .plans-row{display:flex;gap:12px;flex-wrap:wrap;}
+  .plan-card{flex:1;min-width:140px;background:var(--panel2);border:1px solid var(--border);border-radius:14px;padding:16px;text-align:center;}
+  .plan-card .plan-price{font-family:'Zen Maru Gothic',sans-serif;font-weight:900;font-size:20px;color:var(--gold);margin:4px 0 2px;}
+  .plan-card .plan-days{color:var(--text-dim);font-size:11px;font-family:'Space Mono',monospace;margin-bottom:10px;}
+  .wa-btn{background:#25D366;color:#0c1f13;font-weight:700;}
+  .hidden{display:none !important;}
+</style>
+</head>
+<body>
+<div class="wrap wide" id="app"><p class="empty-state">Chargement…</p></div>
+
+<script>
+let CURRENT_USER = null;
+let CURRENT_PROFILE = null;
+let CURRENT_STATUS = null;
+let CURRENT_QUIZ = null;
+
+const app = document.getElementById('app');
+
+function escapeHtml(str){ const d = document.createElement('div'); d.textContent = str; return d.innerHTML; }
+
+async function init(){
+  const { data: { session } } = await sb.auth.getSession();
+  if(!session){ window.location.href = 'index.html'; return; }
+  CURRENT_USER = session.user;
+
+  const { data: profile } = await sb.from('profiles').select('*').eq('id', CURRENT_USER.id).single();
+  CURRENT_PROFILE = profile;
+
+  const { data: status } = await sb.from('account_status').select('*').eq('user_id', CURRENT_USER.id).single();
+  CURRENT_STATUS = status;
+
+  if(CURRENT_STATUS && CURRENT_STATUS.is_banned){
+    renderBanned();
+    return;
+  }
+
+  await loadOrCreateQuiz();
+  renderDashboard();
+}
+
+async function loadOrCreateQuiz(){
+  let { data: quiz } = await sb.from('quizzes').select('*').eq('owner_id', CURRENT_USER.id).maybeSingle();
+  if(!quiz){
+    const { data: created, error } = await sb.from('quizzes')
+      .insert({ owner_id: CURRENT_USER.id, title: 'Mon quiz de compatibilité' })
+      .select().single();
+    if(error){ console.error(error); return; }
+    quiz = created;
+  }
+  CURRENT_QUIZ = quiz;
+}
+
+function renderBanned(){
+  app.innerHTML = `
+    <div class="card" style="text-align:center;">
+      <div class="eyebrow">Compte suspendu</div>
+      <h1 class="title" style="font-size:24px;">Accès bloqué</h1>
+      <p class="lede">Ton compte a été suspendu par un administrateur.</p>
+      <button class="btn secondary" id="logoutBtn">Se déconnecter</button>
+    </div>
+  `;
+  document.getElementById('logoutBtn').addEventListener('click', async ()=>{ await sb.auth.signOut(); window.location.href='index.html'; });
+}
+
+function isPro(){
+  return CURRENT_STATUS && CURRENT_STATUS.pro_until && new Date(CURRENT_STATUS.pro_until) > new Date();
+}
+
+async function renderDashboard(){
+  const shareLink = `${window.location.origin}${window.location.pathname.replace('dashboard.html','')}quiz.html?q=${CURRENT_QUIZ.id}`;
+  const pro = isPro();
+
+  app.innerHTML = `
+    <div class="top-row">
+      <div>
+        <div class="eyebrow">Bonjour ${escapeHtml(CURRENT_PROFILE ? CURRENT_PROFILE.username : '')}</div>
+        <h1 class="title" style="font-size:26px;">Mon quiz</h1>
+      </div>
+      <button class="btn ghost small" id="logoutBtn">Déconnexion</button>
+    </div>
+
+    <div class="card">
+      <label class="small">Lien à partager</label>
+      <div class="share-box">
+        <input type="text" id="shareInput" readonly value="${shareLink}" />
+        <button class="btn small" id="copyBtn">Copier</button>
+      </div>
+      ${pro
+        ? `<span class="pill pro">Pro actif jusqu'au ${new Date(CURRENT_STATUS.pro_until).toLocaleDateString('fr-FR')}</span>`
+        : `<span class="pill mid">Version gratuite</span>`}
+    </div>
+
+    <div class="card">
+      <div class="eyebrow">Questions du quiz</div>
+      <div id="qList"></div>
+      <div style="margin-top:14px;">
+        <label class="small">Nouvelle question</label>
+        <input type="text" id="newQText" placeholder="Ta question" />
+        <label class="small">Options (coche ta bonne réponse)</label>
+        <div id="newOptsZone"></div>
+        <button class="btn secondary" id="addQuestionBtn" style="margin-top:10px;">Ajouter la question</button>
+      </div>
+    </div>
+
+    <div class="card" id="quiz-packs-card">
+      <div class="eyebrow">Lots de quiz par catégorie</div>
+      <p class="lede" style="margin-bottom:14px;">Choisis un thème et récupère un quiz complet tout prêt — il ne te reste qu'à indiquer ta propre réponse pour chaque question. ${pro ? '' : "La catégorie Cinéma & Séries est offerte en aperçu ; les autres sont réservées au Pro."}</p>
+      <div id="packsZone"></div>
+    </div>
+
+    <div class="card">
+      <div class="eyebrow">Réponses reçues</div>
+      <div id="responsesZone"></div>
+    </div>
+
+    ${pro ? '' : renderProUpsell()}
+
+    <div class="signature">— Joël Valdo</div>
+  `;
+
+  document.getElementById('logoutBtn').addEventListener('click', async ()=>{ await sb.auth.signOut(); window.location.href='index.html'; });
+  document.getElementById('copyBtn').addEventListener('click', ()=>{
+    document.getElementById('shareInput').select();
+    document.execCommand('copy');
+    const btn = document.getElementById('copyBtn');
+    btn.textContent = 'Copié !';
+    setTimeout(()=> btn.textContent = 'Copier', 1500);
+  });
+
+  await renderQuestions();
+  renderQuizPacks(pro);
+  await renderResponses(pro);
+  setupOptionInputs();
+  setupAddQuestion();
+}
+
+function renderProUpsell(){
+  const username = CURRENT_PROFILE ? CURRENT_PROFILE.username : '';
+  const cards = PRO_PLANS.map(p => `
+    <div class="plan-card">
+      <div class="eyebrow" style="margin-bottom:2px;">${p.label}</div>
+      <div class="plan-price">${p.price}</div>
+      <div class="plan-days">${p.days} jours</div>
+      <a class="btn wa-btn small" style="width:100%;" href="${buildProWhatsAppLink(username, p.days)}" target="_blank" rel="noopener">
+        Demander sur WhatsApp
+      </a>
+    </div>
+  `).join('');
+  return `
+    <div class="card" id="pro-upsell">
+      <div class="eyebrow">Passer en Pro</div>
+      <p class="lede" style="margin-bottom:10px;">Avec la version gratuite tu vois le nom, le score et la date de chaque réponse, et un seul lot de quiz en aperçu. La version Pro débloque :</p>
+      <ul style="margin:0 0 14px;padding-left:18px;color:var(--text-dim);font-size:13.5px;line-height:1.7;">
+        <li>Le détail complet de chaque réponse, question par question</li>
+        <li>Tous les lots de quiz par catégorie, pas seulement l'aperçu gratuit</li>
+        <li>Conservation des réponses pendant 30 jours au lieu de 7</li>
+      </ul>
+      <div class="plans-row">${cards}</div>
+    </div>
+  `;
+}
+
+/* ---------- Lots de quiz par catégorie (Pro) ---------- */
+
+function renderQuizPacks(pro){
+  const zone = document.getElementById('packsZone');
+  if(!zone) return;
+  zone.innerHTML = `
+    <div class="plans-row">
+      ${QUIZ_TEMPLATES.map(t => {
+        const unlocked = pro || t.free;
+        return `
+        <div class="plan-card">
+          <div style="font-size:26px;margin-bottom:4px;">${t.emoji}</div>
+          <div style="font-weight:600;font-size:13.5px;margin-bottom:6px;">${escapeHtml(t.label)}</div>
+          <div class="plan-days" style="margin-bottom:10px;">${t.questions.length} questions</div>
+          ${unlocked
+            ? `<button class="btn small secondary" style="width:100%;" data-pack="${t.id}">Utiliser ce lot</button>`
+            : `<a href="#pro-upsell" class="btn small ghost" style="width:100%;" data-scroll-pro>🔒 Pro</a>`}
+        </div>
+      `;}).join('')}
+    </div>
+  `;
+  zone.querySelectorAll('[data-pack]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const template = QUIZ_TEMPLATES.find(t => t.id === btn.getAttribute('data-pack'));
+      if(!pro && !template.free) return; // filet de sécurité, ne devrait jamais arriver via l'UI
+      renderPackReview(template, pro);
+    });
+  });
+  zone.querySelectorAll('[data-scroll-pro]').forEach(el=>{
+    el.addEventListener('click', (e)=>{
+      e.preventDefault();
+      const target = document.getElementById('pro-upsell');
+      if(target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  });
+}
+
+// Écran où l'utilisateur indique SA bonne réponse pour chaque question du
+// lot choisi (la compatibilité dépend de lui, pas d'une réponse figée dans
+// le lot). Une fois validé, ça remplace entièrement les questions du quiz.
+function renderPackReview(template, pro){
+  const zone = document.getElementById('packsZone');
+  zone.innerHTML = `
+    <p style="font-size:12.5px;color:var(--danger);margin-bottom:12px;">
+      ⚠️ Appliquer ce lot remplacera toutes les questions actuelles de ton quiz.
+    </p>
+    <div id="packQuestionsZone">
+      ${template.questions.map((q, qi) => `
+        <div class="card" style="margin-bottom:10px;padding:14px 16px;">
+          <div style="font-weight:600;margin-bottom:8px;">${qi+1}. ${escapeHtml(q.text)}</div>
+          ${q.options.map((opt, oi) => `
+            <div class="q-opt-row">
+              <input type="radio" name="pack-correct-${qi}" value="${oi}" ${oi===0?'checked':''} />
+              <label style="font-size:13.5px;">${escapeHtml(opt)}</label>
+            </div>
+          `).join('')}
+        </div>
+      `).join('')}
+    </div>
+    <div style="display:flex;gap:10px;">
+      <button class="btn ghost" id="packCancelBtn">Annuler</button>
+      <button class="btn secondary" id="packConfirmBtn">Utiliser ce lot</button>
+    </div>
+  `;
+  document.getElementById('packCancelBtn').addEventListener('click', ()=> renderQuizPacks(pro));
+  document.getElementById('packConfirmBtn').addEventListener('click', async ()=>{
+    if(!confirm("Remplacer toutes tes questions actuelles par ce lot ?")) return;
+    const confirmBtn = document.getElementById('packConfirmBtn');
+    confirmBtn.disabled = true;
+    confirmBtn.textContent = 'Application…';
+
+    const newQuestions = template.questions.map((q, qi) => {
+      const radio = document.querySelector(`input[name="pack-correct-${qi}"]:checked`);
+      return {
+        quiz_id: CURRENT_QUIZ.id,
+        text: q.text,
+        options: q.options,
+        correct_index: parseInt(radio.value),
+        position: qi
+      };
+    });
+
+    const { error: delError } = await sb.from('quiz_questions').delete().eq('quiz_id', CURRENT_QUIZ.id);
+    if(delError){ alert("Erreur lors du remplacement des questions."); confirmBtn.disabled=false; confirmBtn.textContent='Utiliser ce lot'; return; }
+
+    const { error: insError } = await sb.from('quiz_questions').insert(newQuestions);
+    if(insError){ alert("Erreur lors de l'ajout des nouvelles questions."); confirmBtn.disabled=false; confirmBtn.textContent='Utiliser ce lot'; return; }
+
+    await renderQuestions();
+    renderQuizPacks(pro);
+  });
+}
+
+
+
+/* ---------- Questions ---------- */
+
+async function renderQuestions(){
+  const { data: questions } = await sb.from('quiz_questions').select('*').eq('quiz_id', CURRENT_QUIZ.id).order('position', { ascending:true });
+  const qList = document.getElementById('qList');
+  if(!questions || questions.length === 0){
+    qList.innerHTML = `<p class="empty-state">Pas encore de question — ajoute-en ci-dessous.</p>`;
+    return;
+  }
+  qList.innerHTML = questions.map((q,i)=>`
+    <div class="card" style="margin-bottom:10px;padding:14px 16px;">
+      <div id="q-view-${q.id}">
+        <div style="font-weight:600;margin-bottom:6px;">${i+1}. ${escapeHtml(q.text)}</div>
+        ${q.options.map((o,oi)=>`<div style="font-size:13px;color:${oi===q.correct_index?'var(--gold)':'var(--text-dim)'};margin-bottom:2px;">${oi===q.correct_index?'★ ':'— '}${escapeHtml(o)}</div>`).join('')}
+        <div style="margin-top:8px;display:flex;gap:16px;">
+          <a class="tiny-link" href="#" data-edit="${q.id}">Modifier</a>
+          <a class="tiny-link" href="#" data-del="${q.id}" style="color:var(--danger);">Supprimer</a>
+        </div>
+      </div>
+      <div id="q-edit-${q.id}" class="hidden">
+        <label class="small">Question</label>
+        <input type="text" class="edit-q-text" data-qid="${q.id}" value="${escapeHtml(q.text)}" />
+        <label class="small">Options (coche ta bonne réponse)</label>
+        ${q.options.map((o,oi)=>`
+          <div class="q-opt-row">
+            <input type="radio" name="edit-correct-${q.id}" value="${oi}" ${oi===q.correct_index?'checked':''} />
+            <input type="text" class="edit-opt-input" data-qid="${q.id}" data-oi="${oi}" value="${escapeHtml(o)}" style="flex:1;margin-bottom:0;" />
+          </div>
+        `).join('')}
+        <div style="display:flex;gap:10px;margin-top:10px;">
+          <button class="btn ghost small" data-cancel-edit="${q.id}">Annuler</button>
+          <button class="btn secondary small" data-save-edit="${q.id}">Enregistrer</button>
+        </div>
+      </div>
+    </div>
+  `).join('');
+
+  qList.querySelectorAll('[data-del]').forEach(el=>{
+    el.addEventListener('click', async (e)=>{
+      e.preventDefault();
+      if(!confirm('Supprimer cette question ?')) return;
+      const id = el.getAttribute('data-del');
+      await sb.from('quiz_questions').delete().eq('id', id);
+      renderQuestions();
+    });
+  });
+
+  qList.querySelectorAll('[data-edit]').forEach(el=>{
+    el.addEventListener('click', (e)=>{
+      e.preventDefault();
+      const id = el.getAttribute('data-edit');
+      document.getElementById('q-view-' + id).classList.add('hidden');
+      document.getElementById('q-edit-' + id).classList.remove('hidden');
+    });
+  });
+
+  qList.querySelectorAll('[data-cancel-edit]').forEach(el=>{
+    el.addEventListener('click', (e)=>{
+      e.preventDefault();
+      const id = el.getAttribute('data-cancel-edit');
+      document.getElementById('q-edit-' + id).classList.add('hidden');
+      document.getElementById('q-view-' + id).classList.remove('hidden');
+    });
+  });
+
+  qList.querySelectorAll('[data-save-edit]').forEach(el=>{
+    el.addEventListener('click', async (e)=>{
+      e.preventDefault();
+      const id = el.getAttribute('data-save-edit');
+      const text = document.querySelector(`.edit-q-text[data-qid="${id}"]`).value.trim();
+      const opts = Array.from(document.querySelectorAll(`.edit-opt-input[data-qid="${id}"]`))
+        .sort((a,b)=> parseInt(a.getAttribute('data-oi')) - parseInt(b.getAttribute('data-oi')))
+        .map(inp=>inp.value.trim());
+      const radio = document.querySelector(`input[name="edit-correct-${id}"]:checked`);
+      if(!text || opts.some(o=>!o)){ alert('Complète la question et les 4 options.'); return; }
+      const { error } = await sb.from('quiz_questions').update({
+        text, options: opts, correct_index: parseInt(radio.value)
+      }).eq('id', id);
+      if(error){ alert('Erreur lors de la sauvegarde.'); return; }
+      renderQuestions();
+    });
+  });
+}
+
+function setupOptionInputs(){
+  const optsZone = document.getElementById('newOptsZone');
+  optsZone.innerHTML = [0,1,2,3].map(i=>`
+    <div class="q-opt-row">
+      <input type="radio" name="correctOpt" value="${i}" ${i===0?'checked':''} />
+      <input type="text" class="opt-input" data-i="${i}" placeholder="Option ${i+1}" style="flex:1;margin-bottom:0;" />
+    </div>
+  `).join('');
+}
+
+function setupAddQuestion(){
+  document.getElementById('addQuestionBtn').addEventListener('click', async ()=>{
+    const text = document.getElementById('newQText').value.trim();
+    const opts = Array.from(document.querySelectorAll('.opt-input')).map(inp=>inp.value.trim());
+    const correctRadio = document.querySelector('input[name=correctOpt]:checked');
+    if(!text || opts.some(o=>!o)){ alert('Complète la question et les 4 options.'); return; }
+    const { count } = await sb.from('quiz_questions').select('*', { count:'exact', head:true }).eq('quiz_id', CURRENT_QUIZ.id);
+    const { error } = await sb.from('quiz_questions').insert({
+      quiz_id: CURRENT_QUIZ.id, text, options: opts,
+      correct_index: parseInt(correctRadio.value), position: count || 0
+    });
+    if(error){ alert("Erreur lors de l'ajout."); return; }
+    document.getElementById('newQText').value = '';
+    setupOptionInputs();
+    renderQuestions();
+  });
+}
+
+/* ---------- Réponses ---------- */
+
+async function renderResponses(pro){
+  // Nettoyage automatique par rétention : 7 jours en gratuit, 30 jours en
+  // Pro. Comme il n'y a pas de tâche planifiée côté serveur, ce nettoyage se
+  // déclenche simplement à chaque ouverture du dashboard — une réponse
+  // expirée disparaîtra donc à la prochaine visite suivant son expiration,
+  // pas exactement à la seconde près.
+  const retentionDays = pro ? 30 : 7;
+  const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000).toISOString();
+  await sb.from('quiz_responses').delete().eq('quiz_id', CURRENT_QUIZ.id).lt('created_at', cutoff);
+
+  const { data: responses } = await sb.from('quiz_responses').select('*').eq('quiz_id', CURRENT_QUIZ.id).order('created_at', { ascending:false });
+  const zone = document.getElementById('responsesZone');
+  const retentionNote = `<p style="font-size:11.5px;color:var(--text-dim);margin:0 0 10px;">Conservées ${retentionDays} jours, sauf suppression manuelle.</p>`;
+  if(!responses || responses.length === 0){
+    zone.innerHTML = retentionNote + `<p class="empty-state">Aucune réponse pour l'instant.</p>`;
+    return;
+  }
+  window.__responses = responses;
+  const rows = responses.map((r,i)=>{
+    const cls = r.score>=75?'high':(r.score>=45?'mid':'low');
+    const date = new Date(r.created_at).toLocaleString('fr-FR');
+    return `
+      <tr>
+        <td data-label="Nom">${escapeHtml(r.respondent_name)}</td>
+        <td data-label="Score"><span class="pill ${cls}">${r.score}%</span></td>
+        <td data-label="Date">${date}</td>
+        <td data-label="Détails">${pro ? `<a class="tiny-link" href="#" data-detail="${i}">voir</a>` : `<a class="tiny-link" href="#pro-upsell" data-scroll-pro style="color:var(--gold);">🔒 Pro</a>`}</td>
+        <td data-label="Supprimer"><a class="tiny-link" href="#" data-remove="${r.id}" style="color:var(--danger);">supprimer</a></td>
+      </tr>
+      <tr id="detail-${i}" class="hidden detail-row"><td colspan="5"><div class="card" id="detail-content-${i}" style="margin:6px 0 0;padding:12px 14px;font-size:12.5px;color:var(--text-dim);"></div></td></tr>
+    `;
+  }).join('');
+  zone.innerHTML = retentionNote + `
+    <table>
+      <thead><tr><th>Nom</th><th>Score</th><th>Date</th><th></th><th></th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+  `;
+  zone.querySelectorAll('[data-remove]').forEach(el=>{
+    el.addEventListener('click', async (e)=>{
+      e.preventDefault();
+      if(!confirm('Supprimer définitivement cette réponse ?')) return;
+      const id = el.getAttribute('data-remove');
+      const { error } = await sb.from('quiz_responses').delete().eq('id', id);
+      if(error){ alert('Erreur lors de la suppression.'); return; }
+      renderResponses(pro);
+    });
+  });
+  zone.querySelectorAll('[data-scroll-pro]').forEach(el=>{
+    el.addEventListener('click', (e)=>{
+      e.preventDefault();
+      const target = document.getElementById('pro-upsell');
+      if(target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  });
+  if(pro){
+    zone.querySelectorAll('[data-detail]').forEach(el=>{
+      el.addEventListener('click', async (e)=>{
+        e.preventDefault();
+        const i = parseInt(el.getAttribute('data-detail'));
+        const row = document.getElementById('detail-' + i);
+        const content = document.getElementById('detail-content-' + i);
+        if(row.classList.contains('hidden')){
+          const r = window.__responses[i];
+          const { data: answerRow, error } = await sb.from('quiz_response_answers').select('answers').eq('response_id', r.id).maybeSingle();
+          if(error || !answerRow){
+            content.innerHTML = `<span style="color:var(--danger);">Détails indisponibles (vérifie que ton abonnement Pro est actif).</span>`;
+          } else {
+            content.innerHTML = answerRow.answers.map(a=>`
+              <div style="margin-bottom:8px;">
+                <div style="color:var(--text);">${escapeHtml(a.question)}</div>
+                <div>Réponse : ${escapeHtml(a.chosen)} ${a.isMatch ? '✅' : '❌'}</div>
+              </div>
+            `).join('');
+          }
+          row.classList.remove('hidden');
+        } else {
+          row.classList.add('hidden');
+        }
+      });
+    });
+  }
+}
+
+init();
+</script>
+
+<script>
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch((err) => console.error("Échec de l'enregistrement du service worker :", err));
+  });
+}
+</script>
+<script src="pwa-install.js"></script>
+</body>
+</html>
