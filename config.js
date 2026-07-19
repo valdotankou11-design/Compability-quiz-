@@ -22,8 +22,8 @@ const JOEL_WHATSAPP = "237675299802";
 // "6 mois"/"1 an" — c'est voulu, ce sont les valeurs données par Joël.)
 const PRO_PLANS = [
   { label: "1 mois",  days: 30,  price: "500 FCFA" },
-  { label: "6 mois",  days: 120, price: "2000 FCFA" },
-  { label: "1 an",    days: 240, price: "3500 FCFA" }
+  { label: "6 mois",  days: 180, price: "2000 FCFA" },
+  { label: "1 an",    days: 360, price: "3500 FCFA" }
 ];
 
 // Construit le lien WhatsApp pré-rempli pour souscrire à un palier Pro.
